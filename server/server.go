@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,8 +27,6 @@ type Server struct {
 	users cmap.ConcurrentMap
 
 	baseDeck *types.Deck
-
-	done chan string
 }
 
 func NewServer(token string, baseDeck *types.Deck) (*Server, error) {
@@ -56,18 +55,7 @@ func NewServer(token string, baseDeck *types.Deck) (*Server, error) {
 		sessions: cmap.New(),
 		users:    cmap.New(),
 		baseDeck: baseDeck,
-		done:     make(chan string),
 	}
-
-	go func() {
-		for {
-			select {
-			case id := <-server.done:
-				server.StopSession(id)
-				log.Printf("session %s stopped", id)
-			}
-		}
-	}()
 
 	return server, nil
 }
@@ -82,18 +70,71 @@ func (s *Server) NewSession(hostID string) string {
 	deck := *s.baseDeck
 	rand.Shuffle(len(deck.Images), func(i, j int) { deck.Images[i], deck.Images[j] = deck.Images[j], deck.Images[i] })
 
-	s.sessions.Set(sessionID, &types.GameSession{
+	gs := &types.GameSession{
 		ID:                sessionID,
 		Users:             cmap.New(),
 		Deck:              *s.baseDeck,
 		SelectedImageName: "",
 		HostID:            hostID,
 		PlayerQueue:       cmap.New(),
-		Sender: func(m types.Message) error {
-			return s.SendMessage(m)
-		},
-		Done: s.done,
-	})
+		Result:            make(chan cmap.ConcurrentMap),
+		Messages:          make(chan types.Message),
+		IsStarted:         false,
+	}
+
+	s.sessions.Set(sessionID, gs)
+
+	go func() {
+		for {
+			select {
+			case result := <-gs.Result:
+				resp, err := s.api.UsersGet(vk_api.Params{
+					"user_ids": strings.Join(result.Keys(), ","),
+				})
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				users := []*types.User{}
+				for _, userResp := range resp {
+					userI, _ := gs.Users.Get(strconv.Itoa(userResp.ID))
+					user := userI.(*types.User)
+					user.FullName = userResp.FirstName + " " + userResp.LastName
+					users = append(users, user)
+				}
+
+				sort.SliceStable(users, func(i, j int) bool {
+					return users[i].SessionInfo.Points > users[j].SessionInfo.Points
+				})
+
+				resTable := []string{}
+				for i, user := range users {
+					resTable = append(resTable, fmt.Sprintf("%d)[id%s|%s] -> %d", i+1, user.ID, user.FullName, user.SessionInfo.Points))
+				}
+
+				for _, user := range users {
+					userID, _ := strconv.Atoi(user.ID)
+					err = s.SendMessage(types.Message{
+						Receiver:   userID,
+						Message:    fmt.Sprintf("Игра окончена!\n%s", strings.Join(resTable, "\n")),
+						ImagesDeck: nil,
+						Keyboard:   types.NewStartKeyboard(),
+					})
+
+					if err != nil {
+						log.Println(err)
+					}
+				}
+
+				log.Printf("session %s ended", gs.ID)
+				s.StopSession(gs.ID)
+				return
+			case message := <-gs.Messages:
+				s.SendMessage(message)
+			}
+		}
+	}()
+
 	return sessionID
 }
 

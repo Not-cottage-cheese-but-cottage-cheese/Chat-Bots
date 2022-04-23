@@ -2,6 +2,7 @@ package types
 
 type User struct {
 	ID          string
+	FullName    string
 	SessionInfo SessionInfo
 }
 

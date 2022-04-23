@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,15 +17,15 @@ const (
 )
 
 type GameSession struct {
-	ID                string              // ID сессии
-	Users             cmap.ConcurrentMap  // Список игроков (текущий)  [string]*User
-	Deck              Deck                // колода сессии
-	SelectedImageName string              // выбранная на ход картинка
-	HostID            string              // ID хоста
-	PlayerQueue       cmap.ConcurrentMap  // ожидающие подключения
-	Sender            func(Message) error // для рассылки сообщений
-	Done              chan string         // для отправки, что сессия кончилась
-	IsStarted         bool                // началась ли игра
+	ID                string                  // ID сессии
+	Users             cmap.ConcurrentMap      // Список игроков (текущий)  [string]*User
+	Deck              Deck                    // колода сессии
+	SelectedImageName string                  // выбранная на ход картинка
+	HostID            string                  // ID хоста
+	PlayerQueue       cmap.ConcurrentMap      // ожидающие подключения
+	Result            chan cmap.ConcurrentMap // результаты
+	Messages          chan Message            // для отправки сообщений
+	IsStarted         bool                    // началась ли игра
 }
 
 func (gs *GameSession) NextTurn() (string, *Deck) {
@@ -105,8 +104,6 @@ func (gs *GameSession) StartGame() {
 	go func() {
 		gs.IsStarted = true
 		for {
-			var err error
-
 			for id, user := range gs.PlayerQueue.Items() {
 				gs.Users.Set(id, user)
 			}
@@ -116,37 +113,18 @@ func (gs *GameSession) StartGame() {
 
 			// карты кончились
 			if len(deck.Images) == 0 {
-				for _, users := range []cmap.ConcurrentMap{gs.Users /*, gs.PlayerQueue*/} {
-					for _, id := range users.Keys() {
-						userID, _ := strconv.Atoi(id)
-						err = gs.Sender(Message{
-							Receiver:   userID,
-							Message:    fmt.Sprintf("Игра окончена!\n%s", gs.String()),
-							ImagesDeck: nil,
-							Keyboard:   NewStartKeyboard(),
-						})
-					}
-				}
-
-				if err != nil {
-					log.Println(err)
-				}
-
-				gs.Done <- gs.ID
+				gs.Result <- gs.Users
 
 				return
 			} else {
 				for _, id := range gs.Users.Keys() {
 					userID, _ := strconv.Atoi(id)
-					err = gs.Sender(Message{
+					gs.Messages <- Message{
 						Receiver:   userID,
 						Message:    fmt.Sprintf("Время на обдумывание %d секунд.\nКлючевое слово: %s", TURN_TIME, keyword),
 						ImagesDeck: deck,
 						Keyboard: NewDeckKeyboard(deck).
 							Add(NewLeaveKeyboard()),
-					})
-					if err != nil {
-						log.Println(err)
 					}
 				}
 			}
@@ -165,14 +143,11 @@ func (gs *GameSession) StartGame() {
 					text = fmt.Sprintf("Было близко! Правильный ответ: %s, ваш ответ: %s", gs.SelectedImageName, user.SessionInfo.PickedImage)
 				}
 
-				err = gs.Sender(Message{
+				gs.Messages <- Message{
 					Receiver:   id,
 					Message:    fmt.Sprintf("%s\nУ вас %d баллов!", text, gs.GetPlayerPoints(user.ID)),
 					ImagesDeck: nil,
 					Keyboard:   NewEmptyKeyboard(),
-				})
-				if err != nil {
-					log.Println(err)
 				}
 
 				user.SessionInfo.PickedImage = ""
