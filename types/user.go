@@ -1,7 +1,7 @@
 package types
 
 type User struct {
-	ID        int
+	ID        string
 	Points    int
-	SessionID int
+	SessionID string
 }

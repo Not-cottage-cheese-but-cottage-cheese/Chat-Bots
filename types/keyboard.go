@@ -2,11 +2,16 @@ package types
 
 import (
 	"encoding/json"
-	"fmt"
+)
+
+const (
+	START_BUTTON = "Старт"
+	LEAVE_BUTTON = "Покинуть игру"
 )
 
 type Keyboard struct {
 	OneTime bool        `json:"one_time"`
+	Inline  bool        `json:"inline"`
 	Buttons [][]*Button `json:"buttons"`
 }
 
@@ -16,24 +21,22 @@ type Button struct {
 }
 
 type Action struct {
-	Type    string `json:"type"`
-	Payload string `json:"payload"`
-	Label   string `json:"label"`
+	Type  string `json:"type"`
+	Label string `json:"label"`
 }
 
-func NewTextAction(buttonText string, payload interface{}) *Action {
+func NewTextAction(label string) *Action {
 	return &Action{
-		Type:    "text",
-		Payload: fmt.Sprintf("{\"button\": \"%v\"}", payload),
-		Label:   buttonText,
+		Type:  "text",
+		Label: label,
 	}
 }
 
 func NewDeckKeyboard(deck *Deck) *Keyboard {
 	buttons := []*Button{}
-	for i, image := range deck.Images {
+	for _, image := range deck.Images {
 		buttons = append(buttons, &Button{
-			Action: NewTextAction(image.Name, i+1),
+			Action: NewTextAction(image.Name),
 			Color:  "primary",
 		})
 	}
@@ -47,7 +50,7 @@ func NewDeckKeyboard(deck *Deck) *Keyboard {
 
 func NewStartKeyboard() *Keyboard {
 	button := &Button{
-		Action: NewTextAction("Старт", "старт"),
+		Action: NewTextAction(START_BUTTON),
 		Color:  "primary",
 	}
 
@@ -58,12 +61,19 @@ func NewStartKeyboard() *Keyboard {
 				button,
 			},
 		},
+	}
+}
+
+func NewEmptyKeyboard() *Keyboard {
+	return &Keyboard{
+		OneTime: false,
+		Buttons: [][]*Button{},
 	}
 }
 
 func NewLeaveKeyboard() *Keyboard {
 	button := &Button{
-		Action: NewTextAction("Покинуть игру", "Покинуть игру"),
+		Action: NewTextAction(LEAVE_BUTTON),
 		Color:  "primary",
 	}
 
@@ -76,6 +86,10 @@ func NewLeaveKeyboard() *Keyboard {
 		},
 	}
 }
+
+// func NewSessionsKeyboard(sessions ) *Keyboard {
+
+// }
 
 func (k Keyboard) String() string {
 	bs, _ := json.Marshal(k)

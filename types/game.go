@@ -12,7 +12,7 @@ const (
 )
 
 type GameSession struct {
-	ID                int
+	ID                string
 	Users             cmap.ConcurrentMap
 	Deck              Deck
 	SelectedImageName string

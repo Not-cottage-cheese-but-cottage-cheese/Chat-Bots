@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	"strconv"
 	"strings"
 	"time"
 	types "vezdekod-chat-bots/types"
@@ -12,6 +11,7 @@ import (
 	vk_api "github.com/SevereCloud/vksdk/v2/api"
 	"github.com/SevereCloud/vksdk/v2/api/params"
 	"github.com/SevereCloud/vksdk/v2/longpoll-bot"
+	"github.com/google/uuid"
 	cmap "github.com/orcaman/concurrent-map"
 )
 
@@ -66,13 +66,13 @@ func (s *Server) Run() error {
 	return s.lp.Run()
 }
 
-func (s *Server) NewSession() int {
-	sessionID := len(s.sessions.Items())
+func (s *Server) NewSession() string {
+	sessionID := uuid.New().String()
 
 	deck := *s.baseDeck
 	rand.Shuffle(len(deck.Images), func(i, j int) { deck.Images[i], deck.Images[j] = deck.Images[j], deck.Images[i] })
 
-	s.sessions.Set(strconv.Itoa(sessionID), &types.GameSession{
+	s.sessions.Set(sessionID, &types.GameSession{
 		ID:    sessionID,
 		Users: cmap.New(),
 		Deck:  *s.baseDeck,
@@ -80,8 +80,8 @@ func (s *Server) NewSession() int {
 	return sessionID
 }
 
-func (s *Server) JoinGame(sessionID int, userID int) {
-	sessionI, ok := s.sessions.Get(strconv.Itoa(sessionID))
+func (s *Server) JoinGame(sessionID string, userID string) {
+	sessionI, ok := s.sessions.Get(sessionID)
 	if !ok {
 		s.NewSession()
 	}
@@ -93,32 +93,42 @@ func (s *Server) JoinGame(sessionID int, userID int) {
 		SessionID: sessionID,
 	}
 
-	session.Users.Set(strconv.Itoa(userID), user)
-	s.users.Set(strconv.Itoa(userID), user)
+	session.Users.Set(userID, user)
+	s.users.Set(userID, user)
 }
 
-func (s *Server) GetUserSessionID(userID int) int {
-	userI, ok := s.users.Get(strconv.Itoa(userID))
+func (s *Server) GetUserSessionID(userID string) string {
+	userI, ok := s.users.Get(userID)
 	if !ok {
-		return -1
+		return ""
 	}
 	user := userI.(*types.User)
 	return user.SessionID
 }
 
-func (s *Server) GetSession(sessionID int) *types.GameSession {
-	sessionI, _ := s.sessions.Get(strconv.Itoa(sessionID))
+func (s *Server) GetSession(sessionID string) *types.GameSession {
+	sessionI, _ := s.sessions.Get(sessionID)
 	return sessionI.(*types.GameSession)
 }
 
-func (s *Server) StopSession(sessionID int) {
-	sessionI, _ := s.sessions.Get(strconv.Itoa(sessionID))
+func (s *Server) StopSession(sessionID string) {
+	sessionI, _ := s.sessions.Get(sessionID)
 	session := sessionI.(*types.GameSession)
 
 	for _, id := range session.Users.Keys() {
 		s.users.Remove(id)
 	}
-	s.sessions.Remove(strconv.Itoa(sessionID))
+	s.sessions.Remove(sessionID)
+}
+
+func (s *Server) GetSessions() map[string]*types.GameSession {
+	result := map[string]*types.GameSession{}
+
+	for id, sessionI := range s.sessions.Items() {
+		result[id] = sessionI.(*types.GameSession)
+	}
+
+	return result
 }
 
 func (s *Server) GetLP() *longpoll.LongPoll {
