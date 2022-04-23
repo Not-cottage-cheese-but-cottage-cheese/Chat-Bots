@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 )
 
 type Keyboard struct {
@@ -22,19 +21,19 @@ type Action struct {
 	Label   string `json:"label"`
 }
 
-func NewTextAction(buttonID int) *Action {
+func NewTextAction(buttonText string, payload interface{}) *Action {
 	return &Action{
 		Type:    "text",
-		Payload: fmt.Sprintf("{\"button\": \"%d\"}", buttonID),
-		Label:   strconv.Itoa(buttonID),
+		Payload: fmt.Sprintf("{\"button\": \"%v\"}", payload),
+		Label:   buttonText,
 	}
 }
 
-func NewKeyboard(buttonsCount int) *Keyboard {
+func NewDeckKeyboard(deck *Deck) *Keyboard {
 	buttons := []*Button{}
-	for i := 0; i < buttonsCount; i++ {
+	for i, image := range deck.Images {
 		buttons = append(buttons, &Button{
-			Action: NewTextAction(i + 1),
+			Action: NewTextAction(image.Name, i+1),
 			Color:  "primary",
 		})
 	}
@@ -42,6 +41,22 @@ func NewKeyboard(buttonsCount int) *Keyboard {
 		OneTime: false,
 		Buttons: [][]*Button{
 			buttons,
+		},
+	}
+}
+
+func NewStartKeyboard() *Keyboard {
+	button := &Button{
+		Action: NewTextAction("Старт", "старт"),
+		Color:  "primary",
+	}
+
+	return &Keyboard{
+		OneTime: true,
+		Buttons: [][]*Button{
+			{
+				button,
+			},
 		},
 	}
 }

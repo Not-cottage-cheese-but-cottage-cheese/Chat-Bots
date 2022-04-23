@@ -1,9 +1,12 @@
 package types
 
 import (
+	"bufio"
 	"io/ioutil"
-	"math/rand"
+	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -19,8 +22,37 @@ type Deck struct {
 	Images []*Image
 }
 
+func getKeywords(path string) (map[string][]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	result := map[string][]string{}
+
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	re := regexp.MustCompile(`\s+`)
+	for scanner.Scan() {
+		content := re.Split(scanner.Text(), -1)
+		result[content[0]] = content[1:]
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 func NewDeckFromFiles(path string, descPath string) (*Deck, error) {
 	files, err := ioutil.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	keywords, err := getKeywords(descPath)
 	if err != nil {
 		return nil, err
 	}
@@ -36,17 +68,16 @@ func NewDeckFromFiles(path string, descPath string) (*Deck, error) {
 
 		deck.Images = append(deck.Images, &Image{
 			ID:       uuid.NewString(),
-			Name:     file.Name(),
+			Name:     strings.TrimSuffix(file.Name(), filepath.Ext(file.Name())),
 			ImgBytes: fileBytes,
-			Keywords: []string{},
+			Keywords: keywords[file.Name()],
 		})
 	}
+
 	return deck, nil
 }
 
 func (d *Deck) GetCards(count int) *Deck {
-	rand.Shuffle(len(d.Images), func(i, j int) { d.Images[i], d.Images[j] = d.Images[j], d.Images[i] })
-
 	if count > len(d.Images) {
 		count = len(d.Images)
 	}
@@ -57,4 +88,26 @@ func (d *Deck) GetCards(count int) *Deck {
 	d.Images = d.Images[count:]
 
 	return result
+}
+
+func (d *Deck) GetUniqKeywordWithImage() (keyword string, image *Image) {
+	keywords := map[string][]*Image{}
+
+	for _, image := range d.Images {
+		for _, keyword := range image.Keywords {
+			if _, ok := keywords[keyword]; !ok {
+				keywords[keyword] = []*Image{}
+			}
+
+			keywords[keyword] = append(keywords[keyword], image)
+		}
+	}
+
+	for keyword, images := range keywords {
+		if len(images) == 1 {
+			return keyword, images[0]
+		}
+	}
+
+	return "", nil
 }

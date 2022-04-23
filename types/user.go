@@ -1,7 +1,7 @@
 package types
 
 type User struct {
-	ID     int
-	Points int64
-	Deck   Deck
+	ID        int
+	Points    int
+	SessionID int
 }
