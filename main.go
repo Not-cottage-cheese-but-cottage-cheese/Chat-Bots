@@ -79,24 +79,50 @@ func main() {
 			session := server.GetSession(sessionID)
 			text := ""
 			if messageText == session.SelectedImageName {
-				session.Users[userID].Points += 3
+				session.AddPointToPlayer(userID, types.POINTS)
 				text = "Верно!"
 			} else {
 				text = fmt.Sprintf("Было близко! Правильный ответ: %s", session.SelectedImageName)
 			}
 			err := server.SendMessage(Message{
 				Receiver:   userID,
-				Message:    fmt.Sprintf("%s\nУ вас %d баллов!", text, session.Users[userID].Points),
+				Message:    fmt.Sprintf("%s\nУ вас %d баллов!", text, session.GetPlayerPoints(userID)),
 				ImagesDeck: nil,
 				Keyboard:   nil,
 			})
 			if err != nil {
 				log.Println(err)
 			}
+		} else if strings.ToLower(messageText) == "покинуть игру" {
+			if sessionID == -1 {
+				err := server.SendMessage(Message{
+					Receiver:   userID,
+					Message:    "Сперва начните игру!",
+					ImagesDeck: nil,
+					Keyboard:   types.NewStartKeyboard(),
+				})
+				if err != nil {
+					log.Println(err)
+				}
+				return
+			} else {
+				err := server.SendMessage(Message{
+					Receiver:   userID,
+					Message:    fmt.Sprintf("Спасибо за игру! Ваш результат: %d баллов!", server.GetSession(sessionID).GetPlayerPoints(userID)),
+					ImagesDeck: nil,
+					Keyboard:   types.NewStartKeyboard(),
+				})
+				if err != nil {
+					log.Println(err)
+				}
+
+				server.StopSession(sessionID)
+				return
+			}
 		} else {
 			err := server.SendMessage(Message{
 				Receiver:   userID,
-				Message:    "Уточните запрос/ответ",
+				Message:    "Уточните запрос!",
 				ImagesDeck: nil,
 				Keyboard:   nil,
 			})
@@ -112,7 +138,7 @@ func main() {
 		if len(deck.Images) == 0 {
 			err := server.SendMessage(Message{
 				Receiver:   userID,
-				Message:    fmt.Sprintf("Игра окончена! Ваш результат: %d", session.Users[userID].Points),
+				Message:    fmt.Sprintf("Игра окончена! Ваш результат: %d", session.GetPlayerPoints(userID)),
 				ImagesDeck: nil,
 				Keyboard:   types.NewStartKeyboard(),
 			})
@@ -125,7 +151,8 @@ func main() {
 				Receiver:   userID,
 				Message:    keyword,
 				ImagesDeck: deck,
-				Keyboard:   types.NewDeckKeyboard(deck),
+				Keyboard: types.NewDeckKeyboard(deck).
+					AddButtonsFromKeyboard(types.NewLeaveKeyboard()),
 			})
 			if err != nil {
 				log.Println(err)

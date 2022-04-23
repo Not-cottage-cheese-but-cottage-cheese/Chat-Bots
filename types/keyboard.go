@@ -52,7 +52,23 @@ func NewStartKeyboard() *Keyboard {
 	}
 
 	return &Keyboard{
-		OneTime: true,
+		OneTime: false,
+		Buttons: [][]*Button{
+			{
+				button,
+			},
+		},
+	}
+}
+
+func NewLeaveKeyboard() *Keyboard {
+	button := &Button{
+		Action: NewTextAction("Покинуть игру", "Покинуть игру"),
+		Color:  "primary",
+	}
+
+	return &Keyboard{
+		OneTime: false,
 		Buttons: [][]*Button{
 			{
 				button,
@@ -64,4 +80,10 @@ func NewStartKeyboard() *Keyboard {
 func (k Keyboard) String() string {
 	bs, _ := json.Marshal(k)
 	return string(bs)
+}
+
+func (k *Keyboard) AddButtonsFromKeyboard(kb *Keyboard) *Keyboard {
+	k.Buttons = append(k.Buttons, kb.Buttons...)
+
+	return k
 }
