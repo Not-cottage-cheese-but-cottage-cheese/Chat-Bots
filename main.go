@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strconv"
 	"strings"
 
 	"github.com/SevereCloud/vksdk/v2/events"
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 
+	"vezdekod-chat-bots/handlers"
+	s "vezdekod-chat-bots/server"
 	types "vezdekod-chat-bots/types"
 )
 
@@ -34,142 +36,50 @@ func main() {
 		log.Fatal(err)
 	}
 
-	server, err := newServer(token, baseDeck)
+	baseDeck.Images = baseDeck.Images[:9]
+
+	server, err := s.NewServer(token, baseDeck)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	server.GetLP().MessageNew(func(_ context.Context, obj events.MessageNewObject) {
 		go func() {
-			userID := obj.Message.PeerID
-			userIDstr := strconv.Itoa(userID)
-			sessionID := server.GetUserSessionID(userIDstr)
 
-			log.Printf("got message %s from %d (session %s)", obj.Message.Text, userID, sessionID)
-
-			messageText := obj.Message.Text
-
-			if strings.EqualFold(messageText, types.START_BUTTON) {
-				if sessionID == "" {
-					sessionID = server.NewSession()
-					server.JoinGame(sessionID, userIDstr)
-
-					err := server.SendMessage(Message{
-						Receiver:   userID,
-						Message:    "Удачной игры!",
-						ImagesDeck: nil,
-						Keyboard:   types.NewEmptyKeyboard(),
-					})
-					if err != nil {
-						log.Println(err)
-					}
-				} else {
-					err := server.SendMessage(Message{
-						Receiver:   userID,
-						Message:    "Вы уже начали игру!",
-						ImagesDeck: nil,
-						Keyboard:   nil,
-					})
-					if err != nil {
-						log.Println(err)
-					}
-					return
-				}
-			} else if _, err := strconv.Atoi(messageText); err == nil {
-				if sessionID == "" {
-					err := server.SendMessage(Message{
-						Receiver:   userID,
-						Message:    "Сперва начните игру!",
-						ImagesDeck: nil,
-						Keyboard:   types.NewStartKeyboard(),
-					})
-					if err != nil {
-						log.Println(err)
-					}
-					return
-				}
-				session := server.GetSession(sessionID)
-				text := ""
-				if messageText == session.SelectedImageName {
-					session.AddPointToPlayer(userID, types.POINTS)
-					text = "Верно!"
-				} else {
-					text = fmt.Sprintf("Было близко! Правильный ответ: %s", session.SelectedImageName)
-				}
-				err := server.SendMessage(Message{
-					Receiver:   userID,
-					Message:    fmt.Sprintf("%s\nУ вас %d баллов!", text, session.GetPlayerPoints(userID)),
-					ImagesDeck: nil,
-					Keyboard:   types.NewEmptyKeyboard(),
-				})
-				if err != nil {
-					log.Println(err)
-				}
-			} else if strings.EqualFold(messageText, types.LEAVE_BUTTON) {
-				if sessionID == "" {
-					err := server.SendMessage(Message{
-						Receiver:   userID,
-						Message:    "Сперва начните игру!",
-						ImagesDeck: nil,
-						Keyboard:   types.NewStartKeyboard(),
-					})
-					if err != nil {
-						log.Println(err)
-					}
-					return
-				} else {
-					err := server.SendMessage(Message{
-						Receiver:   userID,
-						Message:    fmt.Sprintf("Спасибо за игру! Ваш результат: %d баллов!", server.GetSession(sessionID).GetPlayerPoints(userID)),
-						ImagesDeck: nil,
-						Keyboard:   types.NewStartKeyboard(),
-					})
-					if err != nil {
-						log.Println(err)
-					}
-
-					server.StopSession(sessionID)
-					return
-				}
-			} else {
-				err := server.SendMessage(Message{
-					Receiver:   userID,
-					Message:    "Уточните запрос!",
-					ImagesDeck: nil,
-					Keyboard:   nil,
-				})
-				if err != nil {
-					log.Println(err)
-				}
-				return
+			ctx := &handlers.CustomContext{
+				Server:      server,
+				Obj:         obj,
+				UserID:      obj.Message.PeerID,
+				UserIDstr:   strconv.Itoa(obj.Message.PeerID),
+				SessionID:   server.GetUserSessionID(strconv.Itoa(obj.Message.PeerID)),
+				MessageText: obj.Message.Text,
 			}
 
-			session := server.GetSession(sessionID)
-			keyword, deck := session.NextTurn()
+			log.Printf("got message %s from %d (session %s)", ctx.MessageText, ctx.UserID, ctx.SessionID)
 
-			if len(deck.Images) == 0 {
-				err := server.SendMessage(Message{
-					Receiver:   userID,
-					Message:    fmt.Sprintf("Игра окончена! Ваш результат: %d", session.GetPlayerPoints(userID)),
-					ImagesDeck: nil,
-					Keyboard:   types.NewStartKeyboard(),
-				})
-				if err != nil {
-					log.Println(err)
-				}
-				server.StopSession(sessionID)
+			if strings.EqualFold(ctx.MessageText, types.START_BUTTON) {
+				// Старт
+				ctx.Start()
+			} else if strings.EqualFold(ctx.MessageText, types.LEAVE_BUTTON) {
+				// Покинуть игру
+				ctx.Leave()
+			} else if strings.EqualFold(ctx.MessageText, types.NEW_GAME_BUTTON) {
+				// Создать новую игру
+				ctx.NewGame()
+			} else if strings.EqualFold(ctx.MessageText, types.CONNECT_BUTTON) {
+				// Подключиться
+				ctx.Connect()
+			} else if strings.EqualFold(ctx.MessageText, types.START_GAME_BUTTON) {
+				ctx.StartGame()
+			} else if _, err := uuid.Parse(ctx.MessageText); err == nil && ctx.SessionID == "" {
+				// Пришел уид И игровой сессии нет
+				ctx.ConnectToGame()
+			} else if _, err := strconv.Atoi(ctx.MessageText); err == nil && ctx.SessionID != "" {
+				ctx.Submit()
 			} else {
-				err := server.SendMessage(Message{
-					Receiver:   userID,
-					Message:    keyword,
-					ImagesDeck: deck,
-					Keyboard: types.NewDeckKeyboard(deck).
-						AddButtonsFromKeyboard(types.NewLeaveKeyboard()),
-				})
-				if err != nil {
-					log.Println(err)
-				}
+				ctx.SendInvalid()
 			}
+
 		}()
 	})
 

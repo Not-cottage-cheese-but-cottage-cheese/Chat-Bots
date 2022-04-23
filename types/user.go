@@ -1,7 +1,12 @@
 package types
 
 type User struct {
-	ID        string
-	Points    int
-	SessionID string
+	ID          string
+	SessionInfo SessionInfo
+}
+
+type SessionInfo struct {
+	PickedImage string
+	Points      int
+	SessionID   string
 }
