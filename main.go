@@ -33,7 +33,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	baseDeck.Images = baseDeck.Images[:10]
 
 	server, err := newServer(token, baseDeck)
 	if err != nil {
