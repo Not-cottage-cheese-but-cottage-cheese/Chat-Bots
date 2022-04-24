@@ -7,7 +7,7 @@ type User struct {
 }
 
 type SessionInfo struct {
-	PickedImage string
+	PickedImage int
 	Points      int
 	SessionID   string
 }

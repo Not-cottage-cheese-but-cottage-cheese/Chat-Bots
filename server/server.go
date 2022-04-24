@@ -1,10 +1,10 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"math/rand"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,8 +19,9 @@ import (
 )
 
 type Server struct {
-	api *vk_api.VK
-	lp  *longpoll.LongPoll
+	api     *vk_api.VK
+	userApi *vk_api.VK
+	lp      *longpoll.LongPoll
 	// игровые сессии
 	sessions cmap.ConcurrentMap
 	// Все играющие пользователи
@@ -29,10 +30,11 @@ type Server struct {
 	baseDeck *types.Deck
 }
 
-func NewServer(token string, baseDeck *types.Deck) (*Server, error) {
-	vk := vk_api.NewVK(token)
+func NewServer(groupToken string, secretToken string, baseDeck *types.Deck) (*Server, error) {
+	api := vk_api.NewVK(groupToken)
+	userApi := vk_api.NewVK(secretToken)
 
-	groups, err := vk.GroupsGetByID(nil)
+	groups, err := api.GroupsGetByID(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -43,14 +45,15 @@ func NewServer(token string, baseDeck *types.Deck) (*Server, error) {
 
 	group := groups[0]
 
-	lp, err := longpoll.NewLongPoll(vk, group.ID)
+	lp, err := longpoll.NewLongPoll(api, group.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	rand.Seed(time.Now().UnixNano())
 	server := &Server{
-		api:      vk,
+		api:      api,
+		userApi:  userApi,
 		lp:       lp,
 		sessions: cmap.New(),
 		users:    cmap.New(),
@@ -71,15 +74,38 @@ func (s *Server) NewSession(hostID string) string {
 	rand.Shuffle(len(deck.Images), func(i, j int) { deck.Images[i], deck.Images[j] = deck.Images[j], deck.Images[i] })
 
 	gs := &types.GameSession{
-		ID:                sessionID,
-		Users:             cmap.New(),
-		Deck:              *s.baseDeck,
-		SelectedImageName: "",
-		HostID:            hostID,
-		PlayerQueue:       cmap.New(),
-		Result:            make(chan cmap.ConcurrentMap),
-		Messages:          make(chan types.Message),
-		IsStarted:         false,
+		ID:                  sessionID,
+		Users:               cmap.New(),
+		Deck:                *s.baseDeck,
+		SelectedImageNumber: -1,
+		HostID:              hostID,
+		PlayerQueue:         cmap.New(),
+		Result:              make(chan cmap.ConcurrentMap),
+		Messages:            make(chan types.Message),
+		IsStarted:           false,
+	}
+
+	gs.NameGetter = func(cm cmap.ConcurrentMap) []*types.User {
+		resp, err := s.api.UsersGet(vk_api.Params{
+			"user_ids": strings.Join(cm.Keys(), ","),
+		})
+		if err != nil {
+			log.Println(err)
+			return []*types.User{}
+		}
+		users := []*types.User{}
+		for _, userResp := range resp {
+			userI, _ := gs.Users.Get(strconv.Itoa(userResp.ID))
+			user := userI.(*types.User)
+			user.FullName = userResp.FirstName + " " + userResp.LastName
+			users = append(users, user)
+		}
+
+		sort.SliceStable(users, func(i, j int) bool {
+			return users[i].SessionInfo.Points > users[j].SessionInfo.Points
+		})
+
+		return users
 	}
 
 	s.sessions.Set(sessionID, gs)
@@ -88,35 +114,13 @@ func (s *Server) NewSession(hostID string) string {
 		for {
 			select {
 			case result := <-gs.Result:
-				resp, err := s.api.UsersGet(vk_api.Params{
-					"user_ids": strings.Join(result.Keys(), ","),
-				})
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				users := []*types.User{}
-				for _, userResp := range resp {
-					userI, _ := gs.Users.Get(strconv.Itoa(userResp.ID))
-					user := userI.(*types.User)
-					user.FullName = userResp.FirstName + " " + userResp.LastName
-					users = append(users, user)
-				}
-
-				sort.SliceStable(users, func(i, j int) bool {
-					return users[i].SessionInfo.Points > users[j].SessionInfo.Points
-				})
-
-				resTable := []string{}
-				for i, user := range users {
-					resTable = append(resTable, fmt.Sprintf("%d)[id%s|%s] -> %d", i+1, user.ID, user.FullName, user.SessionInfo.Points))
-				}
+				users := gs.NameGetter(result)
 
 				for _, user := range users {
 					userID, _ := strconv.Atoi(user.ID)
-					err = s.SendMessage(types.Message{
+					err := s.SendMessage(types.Message{
 						Receiver:   userID,
-						Message:    fmt.Sprintf("Игра окончена!\n%s", strings.Join(resTable, "\n")),
+						Message:    fmt.Sprintf("Игра окончена!\n%s", gs.String()),
 						ImagesDeck: nil,
 						Keyboard:   types.NewStartKeyboard(),
 					})
@@ -147,7 +151,7 @@ func (s *Server) JoinGame(sessionID string, userID string) {
 		SessionInfo: types.SessionInfo{
 			SessionID:   sessionID,
 			Points:      0,
-			PickedImage: "",
+			PickedImage: -1,
 		},
 	}
 
@@ -164,6 +168,29 @@ func (s *Server) LeaveGameForUser(userID string) {
 
 	session.RemovePlayer(userID)
 	s.users.Remove(userID)
+
+	if session.PlayerQueue.Count() == 0 && !session.IsStarted {
+		s.StopSession(session.ID)
+	} else if !session.IsStarted && userID == session.HostID {
+		for _, id := range session.PlayerQueue.Keys() {
+			numID, _ := strconv.Atoi(id)
+			err := s.SendMessage(types.Message{
+				Receiver:   numID,
+				Message:    "Хост покинул игру :(",
+				ImagesDeck: nil,
+				Keyboard:   types.NewGameSelectKeyboard(),
+			})
+
+			if err != nil {
+				log.Println(err)
+			}
+
+			session.RemovePlayer(id)
+			s.users.Remove(id)
+		}
+
+		s.StopSession(session.ID)
+	}
 }
 
 func (s *Server) GetUserSessionID(userID string) string {
@@ -177,6 +204,9 @@ func (s *Server) GetUserSessionID(userID string) string {
 
 func (s *Server) GetSession(sessionID string) *types.GameSession {
 	sessionI, _ := s.sessions.Get(sessionID)
+	if sessionI == nil {
+		return nil
+	}
 	return sessionI.(*types.GameSession)
 }
 
@@ -218,8 +248,9 @@ func (s *Server) SendMessage(message types.Message) error {
 
 	if message.ImagesDeck != nil {
 		for _, image := range message.ImagesDeck.Images {
-			resp, err := s.api.UploadMessagesPhoto(message.Receiver, bytes.NewReader(image.ImgBytes))
+			resp, err := s.api.UploadMessagesPhoto(message.Receiver, image.GetReader())
 			if err != nil {
+				log.Println(err)
 				return nil
 			}
 			photo := resp[0]
@@ -235,7 +266,54 @@ func (s *Server) SendMessage(message types.Message) error {
 	builder.RandomID(0)
 	builder.PeerID(message.Receiver)
 
-	s.api.MessagesSend(vk_api.Params(builder.Params))
+	_, err := s.api.MessagesSend(vk_api.Params(builder.Params))
 
-	return nil
+	log.Printf("send message to %d with error %v", message.Receiver, err)
+
+	return err
+}
+
+func (s *Server) GetAlbumDeck(ownerID string, albumID string) (*types.Deck, error) {
+	owner, _ := strconv.Atoi(ownerID)
+	album, _ := strconv.Atoi(albumID)
+
+	resp, err := s.userApi.PhotosGet(vk_api.Params{
+		"owner_id": owner,
+		"album_id": album,
+		"count":    types.MAX_DECK_SIZE,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	re := regexp.MustCompile(`\s+`)
+
+	deck := &types.Deck{}
+	for _, imageInfo := range resp.Items {
+		keywords := re.Split(imageInfo.Text, -1)
+
+		if len(keywords) == 1 && keywords[0] == "" {
+			continue
+		}
+
+		if len(keywords) > 0 {
+			fmt.Println(len(keywords), keywords)
+			deck.Images = append(deck.Images, &types.Image{
+				ID:       uuid.NewString(),
+				Name:     imageInfo.Title,
+				ImgBytes: nil,
+				URL:      imageInfo.MaxSize().URL,
+				Keywords: keywords,
+			})
+		}
+
+	}
+
+	if len(deck.Images) == 0 {
+		return &types.Deck{}, nil
+	}
+	// перемешаем колоду
+	rand.Shuffle(len(deck.Images), func(i, j int) { deck.Images[i], deck.Images[j] = deck.Images[j], deck.Images[i] })
+
+	return deck, nil
 }

@@ -29,14 +29,15 @@ func init() {
 }
 
 func main() {
-	token := viper.GetString("group_token")
+	groupToken := viper.GetString("group_token")
+	secretToken := viper.GetString("secret")
 
 	baseDeck, err := types.NewDeckFromFiles("./images", "keywords.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	server, err := s.NewServer(token, baseDeck)
+	server, err := s.NewServer(groupToken, secretToken, baseDeck)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,13 +69,22 @@ func main() {
 				// Подключиться
 				ctx.Connect()
 			} else if strings.EqualFold(ctx.MessageText, types.START_GAME_BUTTON) {
+				// Начать игру
 				ctx.StartGame()
 			} else if _, err := uuid.Parse(ctx.MessageText); err == nil && ctx.SessionID == "" {
 				// Пришел уид И игровой сессии нет
 				ctx.ConnectToGame()
 			} else if _, err := strconv.Atoi(ctx.MessageText); err == nil && ctx.SessionID != "" {
+				// пришло число
 				ctx.Submit()
+			} else if strings.EqualFold(ctx.MessageText, types.RESULTS_BUTTON) {
+				// Результаты
+				ctx.Results()
+			} else if isAlbumURL(ctx.MessageText) && ctx.SessionID != "" {
+				// сменить колоду
+				ctx.SetDeck()
 			} else {
+				// пришло нечто невалидное
 				ctx.SendInvalid()
 			}
 

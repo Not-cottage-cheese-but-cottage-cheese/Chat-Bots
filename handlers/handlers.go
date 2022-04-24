@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"log"
+	"regexp"
 	s "vezdekod-chat-bots/server"
 	"vezdekod-chat-bots/types"
 
@@ -82,8 +83,13 @@ func (c *CustomContext) NewGame() {
 		c.Server.JoinGame(c.SessionID, c.UserIDstr)
 
 		err = c.Server.SendMessage(types.Message{
-			Receiver:   c.UserID,
-			Message:    fmt.Sprintf("Удачной игры!\nID вашей сесии: %s", c.SessionID),
+			Receiver: c.UserID,
+			Message: fmt.Sprintf(
+				`Удачной игры!
+				ID вашей сесии: %s
+				Сообщите данный ID своим друзьям, чтобы вы смогли сыграть вместе!
+				Вы можете начать игру со стандартной колодой или прислать ссылку на альбом с новой колодой`,
+				c.SessionID),
 			ImagesDeck: nil,
 			Keyboard:   types.NewStartNewGameKeyboard().Add(types.NewLeaveKeyboard()),
 		})
@@ -108,7 +114,8 @@ func (c *CustomContext) Connect() {
 			Receiver:   c.UserID,
 			Message:    "Выберите сессию или создайте свою",
 			ImagesDeck: nil,
-			Keyboard:   types.NewSessionsKeyboard(c.Server.GetSessions()).Add(types.NewNewGameKeyboard()),
+			Keyboard: types.NewSessionsKeyboard(c.Server.GetSessions()).
+				Add(types.NewNewGameKeyboard()),
 		})
 	}
 
@@ -124,7 +131,7 @@ func (c *CustomContext) StartGame() {
 			Receiver:   c.UserID,
 			Message:    "Сперва создайте игру!",
 			ImagesDeck: nil,
-			Keyboard:   nil,
+			Keyboard:   types.NewGameSelectKeyboard(),
 		})
 	} else {
 		session := c.Server.GetSession(c.SessionID)
@@ -147,6 +154,19 @@ func (c *CustomContext) StartGame() {
 
 func (c *CustomContext) ConnectToGame() {
 	session := c.Server.GetSession(c.MessageText)
+	if session == nil {
+		err := c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    "Сессия не найдена",
+			ImagesDeck: nil,
+			Keyboard:   types.NewGameSelectKeyboard(),
+		})
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
+
 	if !session.IsStarted {
 		err := c.Server.SendMessage(types.Message{
 			Receiver:   c.UserID,
@@ -173,7 +193,30 @@ func (c *CustomContext) ConnectToGame() {
 
 func (c *CustomContext) Submit() {
 	session := c.Server.GetSession(c.SessionID)
-	session.SetImage(c.UserIDstr, c.MessageText)
+	session.SetUserPick(c.UserIDstr, c.MessageText)
+}
+
+func (c *CustomContext) Results() {
+	var err error
+
+	if c.SessionID == "" {
+		err = c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    "Вы еще не начали игру!",
+			ImagesDeck: nil,
+			Keyboard:   types.NewGameSelectKeyboard(),
+		})
+	} else {
+		err = c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    c.Server.GetSession(c.SessionID).String(),
+			ImagesDeck: nil,
+			Keyboard:   nil,
+		})
+	}
+	if err != nil {
+		log.Println(err)
+	}
 }
 
 func (c *CustomContext) SendInvalid() {
@@ -191,7 +234,8 @@ func (c *CustomContext) SendInvalid() {
 		var keyboard *types.Keyboard = nil
 		if !session.IsStarted {
 			if session.HostID == c.UserIDstr {
-				keyboard = types.NewStartNewGameKeyboard().Add(types.NewLeaveKeyboard())
+				keyboard = types.NewStartNewGameKeyboard().
+					Add(types.NewLeaveKeyboard())
 			}
 		}
 
@@ -206,4 +250,64 @@ func (c *CustomContext) SendInvalid() {
 	if err != nil {
 		log.Println(err)
 	}
+}
+
+func (c *CustomContext) SetDeck() {
+	var err error
+
+	text := ""
+	if c.Server.GetSession(c.SessionID).IsStarted {
+		text = "Нельзя сменить колоду во время игры"
+	} else if c.UserIDstr != c.Server.GetSession(c.SessionID).HostID {
+		text = "Только хост может установить колоду"
+	}
+	if text != "" {
+		err = c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    text,
+			ImagesDeck: nil,
+			Keyboard:   nil,
+		})
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
+
+	re := regexp.MustCompile(`(https?:\/\/)?vk.com\/album(-?\d+)_(\d+)`)
+	match := re.FindStringSubmatch(c.MessageText)
+
+	ownerID := match[2]
+	albumID := match[3]
+
+	deck, err := c.Server.GetAlbumDeck(ownerID, albumID)
+	if err != nil {
+		log.Println(err)
+		err = c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    "Что-то пошло не так",
+			ImagesDeck: nil,
+			Keyboard:   nil,
+		})
+	} else if len(deck.Images) == 0 {
+		err = c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    "Выбранный альбом не подходит для колоды",
+			ImagesDeck: nil,
+			Keyboard:   nil,
+		})
+	} else {
+		c.Server.GetSession(c.SessionID).Deck = *deck
+
+		err = c.Server.SendMessage(types.Message{
+			Receiver:   c.UserID,
+			Message:    fmt.Sprintf("Колода успешно установлена!\nЕё размер составит %d карт", len(deck.Images)),
+			ImagesDeck: nil,
+			Keyboard:   types.NewStartNewGameKeyboard().Add(types.NewLeaveKeyboard()),
+		})
+	}
+	if err != nil {
+		log.Println(err)
+	}
+
 }

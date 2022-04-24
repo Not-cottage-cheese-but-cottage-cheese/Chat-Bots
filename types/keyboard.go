@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"strconv"
 )
 
 const (
@@ -11,6 +12,7 @@ const (
 	CONNECT_BUTTON    = "Подключиться"
 	NEW_GAME_BUTTON   = "Начать новую игру"
 	START_GAME_BUTTON = "Начать игру"
+	RESULTS_BUTTON    = "Результаты"
 )
 
 type Keyboard struct {
@@ -38,9 +40,9 @@ func NewTextAction(label string) *Action {
 
 func NewDeckKeyboard(deck *Deck) *Keyboard {
 	buttons := []*Button{}
-	for _, image := range deck.Images {
+	for i := range deck.Images {
 		buttons = append(buttons, &Button{
-			Action: NewTextAction(image.Name),
+			Action: NewTextAction(strconv.Itoa(i + 1)),
 			Color:  "primary",
 		})
 	}
@@ -55,6 +57,22 @@ func NewDeckKeyboard(deck *Deck) *Keyboard {
 func NewStartKeyboard() *Keyboard {
 	button := &Button{
 		Action: NewTextAction(START_BUTTON),
+		Color:  "primary",
+	}
+
+	return &Keyboard{
+		OneTime: false,
+		Buttons: [][]*Button{
+			{
+				button,
+			},
+		},
+	}
+}
+
+func NewResultsKeyboard() *Keyboard {
+	button := &Button{
+		Action: NewTextAction(RESULTS_BUTTON),
 		Color:  "primary",
 	}
 

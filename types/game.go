@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -11,21 +10,23 @@ import (
 )
 
 const (
-	CARDS_COUNTS = 5
-	POINTS       = 3
-	TURN_TIME    = 10
+	CARDS_COUNTS  = 5
+	POINTS        = 3
+	TURN_TIME     = 15
+	MAX_DECK_SIZE = 100
 )
 
 type GameSession struct {
-	ID                string                  // ID сессии
-	Users             cmap.ConcurrentMap      // Список игроков (текущий)  [string]*User
-	Deck              Deck                    // колода сессии
-	SelectedImageName string                  // выбранная на ход картинка
-	HostID            string                  // ID хоста
-	PlayerQueue       cmap.ConcurrentMap      // ожидающие подключения
-	Result            chan cmap.ConcurrentMap // результаты
-	Messages          chan Message            // для отправки сообщений
-	IsStarted         bool                    // началась ли игра
+	ID                  string                           // ID сессии
+	Users               cmap.ConcurrentMap               // Список игроков (текущий)  [string]*User
+	Deck                Deck                             // колода сессии
+	SelectedImageNumber int                              // выбранная на ход картинка
+	HostID              string                           // ID хоста
+	PlayerQueue         cmap.ConcurrentMap               // ожидающие подключения
+	Result              chan cmap.ConcurrentMap          // результаты
+	Messages            chan Message                     // для отправки сообщений
+	IsStarted           bool                             // началась ли игра
+	NameGetter          func(cmap.ConcurrentMap) []*User // получение имен пользователей с формированием рейтинговой таблицы
 }
 
 func (gs *GameSession) NextTurn() (string, *Deck) {
@@ -39,11 +40,11 @@ func (gs *GameSession) NextTurn() (string, *Deck) {
 		Images: gs.Deck.Images[:count],
 	}
 	keyword, selected := result.GetUniqKeywordWithImage()
-	if selected == nil {
+	if selected == -1 {
 		return "", result
 	}
 
-	gs.SelectedImageName = selected.Name
+	gs.SelectedImageNumber = selected
 	gs.Deck.Images = gs.Deck.Images[count:]
 	return keyword, result
 }
@@ -73,31 +74,24 @@ func (gs *GameSession) IsEmpty() bool {
 	return gs.PlayerQueue.IsEmpty() && gs.Users.IsEmpty()
 }
 
-func (gs *GameSession) SetImage(userID, number string) {
+func (gs *GameSession) SetUserPick(userID, number string) {
 	userI, _ := gs.Users.Get(userID)
 	user := userI.(*User)
 
-	user.SessionInfo.PickedImage = number
+	user.SessionInfo.PickedImage, _ = strconv.Atoi(number)
 
 	gs.Users.Set(userID, user)
 }
 
 func (gs *GameSession) String() string {
-	users := []*User{}
-	for _, user := range gs.Users.Items() {
-		users = append(users, user.(*User))
-	}
+	users := gs.NameGetter(gs.Users)
 
-	sort.SliceStable(users, func(i, j int) bool {
-		return users[i].SessionInfo.Points > users[j].SessionInfo.Points
-	})
-
-	usrsStings := []string{}
+	resTable := []string{}
 	for i, user := range users {
-		usrsStings = append(usrsStings, fmt.Sprintf("%d) %s: %d", i+1, user.ID, user.SessionInfo.Points))
+		resTable = append(resTable, fmt.Sprintf("%d)[id%s|%s] -> %d", i+1, user.ID, user.FullName, user.SessionInfo.Points))
 	}
 
-	return strings.Join(usrsStings, "\n")
+	return strings.Join(resTable, "\n")
 }
 
 func (gs *GameSession) StartGame() {
@@ -109,23 +103,23 @@ func (gs *GameSession) StartGame() {
 			}
 			gs.PlayerQueue.Clear()
 
+			// карты кончились
+			if len(gs.Deck.Images) == 0 {
+				gs.Result <- gs.Users
+				return
+			}
+
 			keyword, deck := gs.NextTurn()
 
-			// карты кончились
-			if len(deck.Images) == 0 {
-				gs.Result <- gs.Users
-
-				return
-			} else {
-				for _, id := range gs.Users.Keys() {
-					userID, _ := strconv.Atoi(id)
-					gs.Messages <- Message{
-						Receiver:   userID,
-						Message:    fmt.Sprintf("Время на обдумывание %d секунд.\nКлючевое слово: %s", TURN_TIME, keyword),
-						ImagesDeck: deck,
-						Keyboard: NewDeckKeyboard(deck).
-							Add(NewLeaveKeyboard()),
-					}
+			for _, id := range gs.Users.Keys() {
+				userID, _ := strconv.Atoi(id)
+				gs.Messages <- Message{
+					Receiver:   userID,
+					Message:    fmt.Sprintf("Время на обдумывание %d секунд.\nКлючевое слово: %s", TURN_TIME, keyword),
+					ImagesDeck: deck,
+					Keyboard: NewDeckKeyboard(deck).
+						Add(NewResultsKeyboard()).
+						Add(NewLeaveKeyboard()),
 				}
 			}
 
@@ -136,21 +130,21 @@ func (gs *GameSession) StartGame() {
 				id, _ := strconv.Atoi(user.ID)
 
 				text := ""
-				if user.SessionInfo.PickedImage == gs.SelectedImageName {
+				if user.SessionInfo.PickedImage == gs.SelectedImageNumber {
 					gs.AddPointToPlayer(user.ID, POINTS)
 					text = "Верно!"
 				} else {
-					text = fmt.Sprintf("Было близко! Правильный ответ: %s, ваш ответ: %s", gs.SelectedImageName, user.SessionInfo.PickedImage)
+					text = fmt.Sprintf("Было близко! Правильный ответ: %d", gs.SelectedImageNumber)
 				}
 
 				gs.Messages <- Message{
 					Receiver:   id,
-					Message:    fmt.Sprintf("%s\nУ вас %d баллов!", text, gs.GetPlayerPoints(user.ID)),
+					Message:    fmt.Sprintf("%s\nВаше количество баллов: %d", text, gs.GetPlayerPoints(user.ID)),
 					ImagesDeck: nil,
 					Keyboard:   NewEmptyKeyboard(),
 				}
 
-				user.SessionInfo.PickedImage = ""
+				user.SessionInfo.PickedImage = -1
 				gs.Users.Set(user.ID, user)
 			}
 

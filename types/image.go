@@ -2,7 +2,12 @@ package types
 
 import (
 	"bufio"
+	"bytes"
+	"io"
 	"io/ioutil"
+	"log"
+	"math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,7 +20,22 @@ type Image struct {
 	ID       string
 	Name     string
 	ImgBytes []byte
+	URL      string
 	Keywords []string
+}
+
+func (i *Image) GetReader() io.Reader {
+	if len(i.ImgBytes) > 0 {
+		return bytes.NewBuffer(i.ImgBytes)
+	} else {
+		response, err := http.Get(i.URL)
+		if err != nil {
+			log.Println(err)
+			return bufio.NewReader(nil)
+		}
+
+		return response.Body
+	}
 }
 
 type Deck struct {
@@ -90,16 +110,16 @@ func (d *Deck) GetCards(count int) *Deck {
 	return result
 }
 
-func (d *Deck) GetUniqKeywordWithImage() (keyword string, image *Image) {
-	keywords := map[string][]*Image{}
+func (d *Deck) GetUniqKeywordWithImage() (keyword string, numer int) {
+	keywords := map[string][]int{}
 
-	for _, image := range d.Images {
+	for i, image := range d.Images {
 		for _, keyword := range image.Keywords {
 			if _, ok := keywords[keyword]; !ok {
-				keywords[keyword] = []*Image{}
+				keywords[keyword] = []int{}
 			}
 
-			keywords[keyword] = append(keywords[keyword], image)
+			keywords[keyword] = append(keywords[keyword], i+1)
 		}
 	}
 
@@ -109,5 +129,9 @@ func (d *Deck) GetUniqKeywordWithImage() (keyword string, image *Image) {
 		}
 	}
 
-	return "", nil
+	// если вдруг ключевые слова дублируются, то возьмем любую :)
+	imageNumber := rand.Intn(len(d.Images))
+	keywordNumber := rand.Intn(len(d.Images[imageNumber].Keywords))
+
+	return d.Images[imageNumber].Keywords[keywordNumber], imageNumber
 }
