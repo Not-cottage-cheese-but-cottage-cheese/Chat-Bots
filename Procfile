@@ -1,0 +1,1 @@
+web: bin/vezdekod-chat-bots
