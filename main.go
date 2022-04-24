@@ -16,7 +16,7 @@ import (
 )
 
 func init() {
-	viper.SetConfigName("config")
+	viper.SetConfigFile(".env")
 	viper.AddConfigPath(".")
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
@@ -29,8 +29,8 @@ func init() {
 }
 
 func main() {
-	groupToken := viper.GetString("group_token")
-	secretToken := viper.GetString("secret")
+	groupToken := viper.GetString("GROUP_TOKEN")
+	secretToken := viper.GetString("SECRET")
 
 	baseDeck, err := types.NewDeckFromFiles("./images", "keywords.txt")
 	if err != nil {
