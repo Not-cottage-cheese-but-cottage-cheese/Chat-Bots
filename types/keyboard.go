@@ -8,7 +8,6 @@ import (
 const (
 	START_BUTTON      = "Старт"
 	LEAVE_BUTTON      = "Покинуть игру"
-	SESSIONS_BUTTON   = "Игровые сессии"
 	CONNECT_BUTTON    = "Подключиться"
 	NEW_GAME_BUTTON   = "Начать новую игру"
 	START_GAME_BUTTON = "Начать игру"
