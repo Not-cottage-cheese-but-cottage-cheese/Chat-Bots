@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
@@ -20,11 +21,14 @@ func init() {
 	viper.AddConfigPath(".")
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			log.Println("no such config file")
+			log.Println("No such config file")
 		} else {
-			log.Println("read config error")
+			log.Println("Read config error")
 		}
-		log.Fatal(err)
+
+		log.Println("Get from OS env")
+		viper.Set("GROUP_TOKEN", os.Getenv("GROUP_TOKEN"))
+		viper.Set("SECRET", os.Getenv("SECRET"))
 	}
 }
 
