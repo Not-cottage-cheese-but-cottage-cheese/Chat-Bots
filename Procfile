@@ -1,1 +1,1 @@
-worker: bin/vezdekod-chat-bots
+web: bin/vezdekod-chat-bots

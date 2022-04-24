@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +31,7 @@ func init() {
 		log.Println("Get from OS env")
 		viper.Set("GROUP_TOKEN", os.Getenv("GROUP_TOKEN"))
 		viper.Set("SECRET", os.Getenv("SECRET"))
+		viper.Set("PORT", os.Getenv("PORT"))
 	}
 }
 
@@ -94,6 +97,16 @@ func main() {
 
 		}()
 	})
+
+	log.Println(viper.GetString("PORT"))
+
+	go func() {
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			log.Printf("pong")
+			fmt.Fprintf(w, "pong")
+		})
+		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", viper.GetString("PORT")), nil))
+	}()
 
 	log.Println("Start server")
 	if err := server.Run(); err != nil {
